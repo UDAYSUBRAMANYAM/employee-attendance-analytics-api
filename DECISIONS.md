@@ -1,18 +1,23 @@
-# DECISIONS.md  (about 150-200 words in total - plain language, your own words)
+# DECISIONS.md
 
-1. **Indexes.** Which indexes did you create, and which query or guarantee does each one serve? Which one did you consider and reject?
+## 1. Indexes
 
-Created a Unique index onemployees.emp_code cuz it is the business identifier and must never be duplicated. i created a unique compound index on attendance_logs.emp_code and date to enforce one attendance record per employee per day.  also created an index attendance_logs.date ascending to support date oriented attendance query on sorting
-2. **Punch-in race.** Two identical punch-in requests arrive at the same instant. Walk through exactly what happens in your code.
-    Two requests can both check for an existing record and initially find none. Both then attempt insertion, but the unique compound index allows only one record for that employee and date. one will be stored and the 201 ok sent then the second request will fail because of DuplicateKeyError and returns 409 Conflict.
+A unique index on `employees.emp_code` supports employee identification and prevents duplicate employee codes. A unique compound index on `attendance_logs.emp_code` and `date` is intended to enforce one attendance record per employee per day. An additional index on `attendance_logs.date` in descending order and `emp_code` in ascending order supports date-oriented queries and sorting.
 
-3. **Ties.** Two employees are tied on late minutes at the cutoff of `limit`. What does your leaderboard return, and why?
+I did not add a department-specific compound index without first establishing that it improves the relevant query plans. Indexes consume storage and increase write costs, so additional indexes should be justified by query patterns and execution statistics.
 
-    The leaderboard uses MongoDB $rank on total late minutes and filters ranks up to the requested limit. Employees tied at the cutoff can therefore all be included, so the response may contain more than the requested limit.
+## 2. Simultaneous Punch-In Requests
 
-4. **Headcount.** How does your department summary make sure employees with zero logs are counted?
+Two requests can both check for an existing attendance record before either inserts it. An application-level existence check alone cannot prevent this race condition. The unique compound index on employee code and date provides the database-level integrity constraint. Duplicate-key errors should be handled as conflicts rather than allowing duplicate attendance records.
 
-    The leaderboard uses MongoDB $rank on total late minutes and filters ranks up to the requested limit. Employees tied at the cutoff can therefore all be included, so the response may contain more than the requested limit.
+## 3. Leaderboard Ties
 
-5. **One thing you would change** if this had to serve 100x the data.
-    I would benchmark explain plans on representative data, add indexes supported by those plans, and review aggregation costs. I would also consider moving analytics to pre-aggregated summaries if real query workloads justify the added complexity.
+The leaderboard uses MongoDB ranking semantics. Employees with the same total late minutes can receive the same rank. Filtering by rank up to the requested limit can return more employees than the limit when multiple employees tie at the cutoff. This behavior preserves ties instead of arbitrarily excluding employees with equal scores.
+
+## 4. Employees Without Attendance Logs
+
+The department summary begins with employees and joins attendance records using `$lookup`. Preserving unmatched records with `preserveNullAndEmptyArrays: true` allows employees without attendance logs to remain in the aggregation. They can therefore contribute to department headcount even when they have no recorded attendance.
+
+## 5. Scaling to 100× the Dataset
+
+I would benchmark representative workloads using MongoDB execution statistics, inspect index usage, and optimize expensive aggregation stages. I would evaluate compound indexes against actual filters and sort operations rather than adding indexes indiscriminately. If analytics become expensive at larger scale, I would consider pre-aggregated summaries or scheduled materialization, while accounting for freshness requirements and additional operational complexity.
